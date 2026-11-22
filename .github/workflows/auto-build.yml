@@ -58,13 +58,16 @@ jobs:
 
       - name: Clone PonWrt source
         run: |
-          git clone --depth=1 --branch "$PONWRT_REF" "$PONWRT_REPO" openwrt
-          cd openwrt
+          cd "$GITHUB_WORKSPACE"
+          rm -rf openwrt
+          git clone --depth=1 --branch "$PONWRT_REF" "$PONWRT_REPO" "$GITHUB_WORKSPACE/openwrt"
+          test -d "$GITHUB_WORKSPACE/openwrt" || { echo "clone 后目录不存在"; ls -la; exit 1; }
+          cd "$GITHUB_WORKSPACE/openwrt"
           echo "source commit: $(git log -1 --format='%h %ad %s' --date=short)"
 
       - name: Switch driver feed to rayniel branch
         run: |
-          cd openwrt
+          cd "$GITHUB_WORKSPACE/openwrt" || { echo "MISSING openwrt"; ls -la "$GITHUB_WORKSPACE"; exit 1; }
           echo "--- before ---"
           grep -n 'pon_drivers' feeds.conf.default
           sed -i "s#https://github.com/pbs05/openwrt-pon-drivers.git#${DRIVER_REPO}.git^${DRIVER_REF}#" feeds.conf.default
@@ -73,7 +76,7 @@ jobs:
 
       - name: Update and install feeds
         run: |
-          cd openwrt
+          cd "$GITHUB_WORKSPACE/openwrt" || { echo "MISSING openwrt"; ls -la "$GITHUB_WORKSPACE"; exit 1; }
           set +e
           ./scripts/feeds update -a; RC_UPDATE=$?
           echo "feeds update rc=$RC_UPDATE"
@@ -101,7 +104,7 @@ jobs:
 
       - name: Verify and enable stock BWmap fix
         run: |
-          cd openwrt
+          cd "$GITHUB_WORKSPACE/openwrt" || { echo "MISSING openwrt"; ls -la "$GITHUB_WORKSPACE"; exit 1; }
           SRC=$(find feeds -name 'airoha-xpon-xgpon.c' | head -1)
           echo "SRC=$SRC"
           if [ -z "$SRC" ]; then
@@ -130,20 +133,20 @@ jobs:
 
       - name: Prepare config
         run: |
-          cd openwrt
+          cd "$GITHUB_WORKSPACE/openwrt" || { echo "MISSING openwrt"; ls -la "$GITHUB_WORKSPACE"; exit 1; }
           cp "$GITHUB_WORKSPACE/$FW_CONFIG" .config
           make defconfig
           grep -E 'CONFIG_TARGET_airoha_an7583_DEVICE_nokia_xg-040g-mf-ubi|CONFIG_PACKAGE_luci-app-pon' .config
 
       - name: Build firmware
         run: |
-          cd openwrt
+          cd "$GITHUB_WORKSPACE/openwrt" || { echo "MISSING openwrt"; ls -la "$GITHUB_WORKSPACE"; exit 1; }
           make -j"$(nproc)" || make -j1 V=s
 
       - name: Collect artifacts
         if: always()
         run: |
-          cd openwrt
+          cd "$GITHUB_WORKSPACE/openwrt" || { echo "MISSING openwrt"; ls -la "$GITHUB_WORKSPACE"; exit 1; }
           mkdir -p "$GITHUB_WORKSPACE/out"
           find bin/targets/airoha -maxdepth 2 -type f \
             \( -name '*mf*' -o -name 'sha256sums' -o -name 'profiles.json' \) \
