@@ -38,6 +38,14 @@ jobs:
           sudo apt-get clean
           df -h /
 
+      - name: Add swap (防 OOM)
+        run: |
+          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
       - name: Install build dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -66,24 +74,59 @@ jobs:
       - name: Update and install feeds
         run: |
           cd openwrt
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          set +e
+          ./scripts/feeds update -a; RC_UPDATE=$?
+          echo "feeds update rc=$RC_UPDATE"
+          if [ ! -d feeds/pon_drivers/airoha-xpon ]; then
+            echo "!! pon_drivers 未就绪，改为手动 clone 分支"
+            rm -rf feeds/pon_drivers
+            git clone --depth 1 --branch "$DRIVER_REF" "${DRIVER_REPO}.git" feeds/pon_drivers
+            echo "manual clone rc=$?"
+          fi
+          ./scripts/feeds install -a; RC_INSTALL=$?
+          echo "feeds install rc=$RC_INSTALL"
+          echo "--- feeds 顶层 ---"; ls feeds || true
+          echo "--- feeds/pon_drivers ---"; ls feeds/pon_drivers 2>/dev/null | head -20 || true
+          git -C feeds/pon_drivers log -1 --format='driver: %h %ad %s' --date=short 2>/dev/null || true
+          {
+            echo "### feeds 诊断"
+            echo '```'
+            echo "update rc=$RC_UPDATE install rc=$RC_INSTALL"
+            grep -n 'pon_drivers' feeds.conf.default || true
+            ls feeds 2>/dev/null || true
+            git -C feeds/pon_drivers log -1 --format='%h %ad %s' --date=short 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$RC_UPDATE" -eq 0 ] && [ "$RC_INSTALL" -eq 0 ]
 
       - name: Verify and enable stock BWmap fix
         run: |
           cd openwrt
-          SRC=$(find feeds -path '*airoha-xpon/src/airoha-xpon-xgpon.c' | head -1)
+          SRC=$(find feeds -name 'airoha-xpon-xgpon.c' | head -1)
           echo "SRC=$SRC"
-          if [ -z "$SRC" ]; then echo "ERROR: airoha-xpon 源码未找到（feeds 未切到 rayniel 分支）"; exit 1; fi
+          if [ -z "$SRC" ]; then
+            echo "ERROR: 未找到 airoha-xpon 源码"
+            find feeds -maxdepth 4 -iname '*airoha*' | head -20
+            exit 1
+          fi
           if ! grep -q 'xgpon_stock_bwmap' "$SRC"; then
-            echo "ERROR: 该分支不含 xgpon_stock_bwmap 补丁"; exit 1
+            echo "ERROR: 该源码不含 xgpon_stock_bwmap 补丁（分支不对）"
+            grep -n 'BWM_CHK_CTRL' "$SRC" | head -5 || true
+            exit 1
           fi
           grep -n 'xgpon_stock_bwmap' "$SRC" | head -5
           sed -i 's/^static bool xgpon_stock_bwmap;/static bool xgpon_stock_bwmap = true;/' "$SRC"
           echo "--- patched ---"
-          grep -n 'xgpon_stock_bwmap = true' "$SRC"
-          sed -i 's/^PKG_RELEASE:=73$/PKG_RELEASE:=74/' feeds/pon_drivers/airoha-xpon/Makefile 2>/dev/null || true
-          grep -n 'PKG_RELEASE' feeds/pon_drivers/airoha-xpon/Makefile | head -2
+          grep -n 'xgpon_stock_bwmap = true' "$SRC" || true
+          MK=$(dirname "$SRC")/../Makefile
+          [ -f "$MK" ] && sed -i 's/^PKG_RELEASE:=.*/PKG_RELEASE:=74/' "$MK" && grep -n '^PKG_RELEASE' "$MK"
+          {
+            echo "### 驱动补丁"
+            echo '```'
+            echo "SRC=$SRC"
+            grep -n 'xgpon_stock_bwmap' "$SRC" | head -5
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Prepare config
         run: |
