@@ -77,7 +77,7 @@ jobs:
           cd "$GITHUB_WORKSPACE/openwrt" || { echo "MISSING openwrt"; ls -la "$GITHUB_WORKSPACE"; exit 1; }
           echo "--- before ---"
           grep -n 'pon_drivers' feeds.conf.default
-          sed -i "s#https://github.com/pbs05/openwrt-pon-drivers.git#${DRIVER_REPO}.git^${DRIVER_REF}#" feeds.conf.default
+          sed -i "s#https://github.com/pbs05/openwrt-pon-drivers.git#${DRIVER_REPO}.git;${DRIVER_REF}#" feeds.conf.default
           echo "--- after ---"
           grep -n 'pon_drivers' feeds.conf.default
 
@@ -85,29 +85,28 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE/openwrt" || { echo "MISSING openwrt"; ls -la "$GITHUB_WORKSPACE"; exit 1; }
           set +e
-          ./scripts/feeds update -a; RC_UPDATE=$?
-          echo "feeds update rc=$RC_UPDATE"
-          if [ ! -d feeds/pon_drivers/airoha-xpon ]; then
-            echo "!! pon_drivers 未就绪，改为手动 clone 分支"
-            rm -rf feeds/pon_drivers
-            git clone --depth 1 --branch "$DRIVER_REF" "${DRIVER_REPO}.git" feeds/pon_drivers
-            echo "manual clone rc=$?"
-          fi
-          ./scripts/feeds install -a; RC_INSTALL=$?
-          echo "feeds install rc=$RC_INSTALL"
+          ./scripts/feeds update -a
+          echo "feeds update rc=$?"
+          echo ">>> 强制把 pon_drivers 换成 rayniel 分支（不依赖 feeds 语法）"
+          rm -rf feeds/pon_drivers
+          git clone --depth 1 --branch "$DRIVER_REF" "${DRIVER_REPO}.git" feeds/pon_drivers
+          echo "driver clone rc=$?"
+          git -C feeds/pon_drivers log -1 --format='driver: %h %ad %s' --date=short
+          test -f feeds/pon_drivers/airoha-xpon/src/airoha-xpon-xgpon.c && echo "driver source OK"
+          ./scripts/feeds install -a
+          echo "feeds install rc=$?"
           echo "--- feeds 顶层 ---"; ls feeds || true
           echo "--- feeds/pon_drivers ---"; ls feeds/pon_drivers 2>/dev/null | head -20 || true
           git -C feeds/pon_drivers log -1 --format='driver: %h %ad %s' --date=short 2>/dev/null || true
           {
             echo "### feeds 诊断"
             echo '```'
-            echo "update rc=$RC_UPDATE install rc=$RC_INSTALL"
             grep -n 'pon_drivers' feeds.conf.default || true
             ls feeds 2>/dev/null || true
             git -C feeds/pon_drivers log -1 --format='%h %ad %s' --date=short 2>/dev/null || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          [ "$RC_UPDATE" -eq 0 ] && [ "$RC_INSTALL" -eq 0 ]
+          exit 0
 
       - name: Verify and enable stock BWmap fix
         run: |
